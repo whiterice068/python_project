@@ -1,8 +1,6 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import os
-import sqlite3
 
 def get_stock_history(ticker_symbol, period="1y", interval="1d"):
     if ticker_symbol:
@@ -150,14 +148,26 @@ def macd(ticker_symbol):
 
         copy_history_data = history_data.copy()
         close = copy_history_data["Close"]
-        print(close.ewm(span=12,adjust=False).mean())
+
+        macd_line = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
+        signal_line = macd_line.ewm(span=9, adjust=False).mean()
+        histogram = macd_line - signal_line
+
+        macd_df = pd.DataFrame({"Date":copy_history_data.index, "close":close, "macd_line":macd_line, "signal_line":signal_line,"histogram":histogram})
+
+        return {"success":True, "data":macd_df, "message":f"Successfully calculated MACD for stock {ticker_symbol}"}
+        
+       
+    else:
+
+        return {"success":False, "data":None, "message":f"Fail to calculate MACD for stock {ticker_symbol}"}
+
         
 
 
 
 
 
-macd("aapl")
 
 
 
