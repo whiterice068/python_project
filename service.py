@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import datetime as dt
 
 def get_stock_history(ticker_symbol, period="1y", interval="1d"):
 
@@ -156,48 +157,63 @@ def boll(stock_data):
 def compare_stocks(*args: str):
 
     all_series = []
+    invalid_stock = []
 
     for stock in args:
         stock_history = get_stock_history(stock)
 
         if stock_history.get("success") == True:
+
             stock_data = stock_history.get("data")
             copy_history_data = stock_data.copy()
-            
-            percent_chg = (copy_history_data["Close"] / copy_history_data["Close"].iloc[0]) * 100
-            percent_chg_series = pd.Series(data=percent_chg, name=stock)
-            all_series.append(percent_chg_series)
+
+            frmt_index = copy_history_data.index.tz_localize(None)
+            copy_history_data.index = frmt_index
+            close_series = pd.Series(copy_history_data["Close"], name=stock.upper())
+                        
+            all_series.append(close_series)
             
         else:
-            return stock_history.get("message")
+            invalid_stock.append(stock)
 
-    percent_chg_df = pd.concat(all_series, axis=1, join="inner")
+    if all_series:
+        all_stock_df = pd.concat(all_series, axis=1, join="inner")
 
-    return percent_chg_df
+    else:
+        return {"success":False, "data":None, "message":f"Invalid stock / stock was not entered"}
+
+    all_stock_df = (all_stock_df / all_stock_df.iloc[0]) * 100
+
+    if invalid_stock:
+        return {"success":True, "data":all_stock_df, "message":f"Some of the stocks are invalid. Invalid stocks : {invalid_stock}"}
+
+    else:
+        return {"success":True, "data":all_stock_df, "message":f"Successfully calculated stocks percentage change"}
 
 
-print(compare_stocks("aapl","9988.hk"))
-    
 
-    
 
         
 
-  
+        
 
-
-
-
-
-
-
-
-
-
+            
 
     
 
 
-    
+
+
+
+
+
+
+
+
+
+        
+
+
+        
 
 
