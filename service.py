@@ -1,15 +1,110 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import datetime as dt
+import sqlite3 
+import time
+import json
+from io import StringIO
 
+
+def df_to_json(df):
+    data = df.to_json()
+    return data
+
+def dict_to_json(dictio):
+    data = json.dumps(dictio)
+    return data
+
+def read_df(json_df):
+    data = pd.read_json(StringIO(json_df))
+    return data
+
+def read_dict(json_dictio):
+    data = json.loads(json_dictio)
+    return data
+
+def cache(get_function, symbol:str, to_json, read_json, data_type:str, *args:str, expire:int=3600):
+
+    conn = sqlite3.connect("service.db")
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    period = args[0] if args else None
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stock_data(
+        symbol TEXT,
+        data TEXT,
+        period TEXT DEFAULT NULL,
+        cached_at INTEGER,
+        expire INTEGER,
+        data_type TEXT,
+        UNIQUE (symbol, period, data_type)
+        )
+        """)
+    
+    if period is not None:
+        select_record = ("SELECT * from stock_data WHERE symbol = ? AND period = ? AND data_type = ?")
+        record = cursor.execute(select_record, (symbol, period, data_type))
+
+    else:
+        select_record = ("SELECT * from stock_data WHERE symbol = ? AND period IS NULL AND data_type = ?")
+        record = cursor.execute(select_record, (symbol, data_type))
+    
+    record_data = record.fetchone()
+
+    if not record_data or (time.time() - record_data["cached_at"]) >= record_data["expire"]:
+
+        upsert = ("""
+                INSERT INTO stock_data (symbol, data, period, cached_at, expire, data_type)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, period, data_type)
+                DO UPDATE SET data = EXCLUDED.data, cached_at = EXCLUDED.cached_at
+                """)
+        
+        fetch_data = get_function(symbol, *args)
+
+        if fetch_data.get("success") == True:
+
+            data = fetch_data.get("data")
+            json_data = to_json(data)
+
+            cursor.execute(upsert, (symbol, json_data, period, time.time(), expire, data_type))
+            conn.commit()
+
+            cursor.close()
+            conn.close()
+
+            return {"success":True, "data":data, "message":fetch_data.get("message")}
+
+        else:
+
+            cursor.close()
+            conn.close()
+            return {"success":False, "data":None, "message":fetch_data.get("message")}
+
+
+    else:
+
+        json_data = record_data["data"]
+        data = read_json(json_data)
+        cursor.close()
+        conn.close()
+
+        return {"success":True, "data":data, "message":"Successfully fetched cached data"}
+
+
+    
 def get_stock_history(ticker_symbol, period="1y", interval="1d"):
 
     if ticker_symbol:
         ticker = yf.Ticker(ticker_symbol.upper()) # 拿到ticker对象，将股票参数转换为大写.upper()
+
         try: # 防止网络波动，爬取失败
 
-            history = ticker.history(period=period,interval=interval)
+            history = ticker.history(period=period, interval=interval)
+            frmt_index = history.index.tz_localize(None)
+            history.index = frmt_index
 
             if history.empty: # 判断DataFrame是否为空
                 return {"success":False, "data":None, "message":f"Fail to fetch stock history for {ticker_symbol}"}
@@ -22,8 +117,13 @@ def get_stock_history(ticker_symbol, period="1y", interval="1d"):
     else:
         return {"success":False, "data":None, "message":f"Ticker symbol is Empty"}
 
-    
-    
+
+def get_stock_history_cached(ticker_symbol, data_period="1y"):
+    symbol = ticker_symbol
+    period = data_period
+    cached_data = cache(get_stock_history, symbol, df_to_json, read_df, "history", period)
+    return cached_data
+
 
 def get_stock_info(ticker_symbol):
 
@@ -51,12 +151,17 @@ def get_stock_info(ticker_symbol):
 
     else:
         return {"success":False, "data":None, "message":f"Ticker Symbol is Empty"}
+
         
+def get_stock_info_cached(ticker_symbol):
+    symbol = ticker_symbol
+    cached_data = cache(get_stock_info, symbol, dict_to_json, read_dict, "info")
+    return cached_data
 
 
+def get_stock_financial_info(ticker_symbol):
 
-def get_stocks_financial_info(ticker_symbol):
-    stock_info = get_stock_info(ticker_symbol)
+    stock_info = get_stock_info_cached(ticker_symbol)
     stock_data = stock_info.get("data")
     if stock_data:
    
@@ -67,7 +172,7 @@ def get_stocks_financial_info(ticker_symbol):
         "netIncomeToCommon", "earningsGrowth", "earningsQuarterlyGrowth", 
         "trailingPE", "forwardPE", "pegRatio", "priceToSalesTrailing12Months", 
         "priceToBook", "bookValue", "enterpriseToRevenue", "enterpriseToEbitda", 
-        "trailingEps", "forwardEps", "epsTrailingTwelveMonths", "epsForward", 
+        "trailingEps", "forwardEps", "devidendYield", "devidendRate",
         "epsCurrentYear", "priceEpsCurrentYear", "returnOnAssets", "returnOnEquity", 
         "totalCash", "totalCashPerShare", "totalDebt", "debtToEquity", 
         "quickRatio", "currentRatio", "freeCashflow", "operatingCashflow"
@@ -154,21 +259,19 @@ def boll(stock_data):
     return boll_df
 
 
-def compare_stocks(*args: str):
+def compare_stocks(*args: str, period="1y"):
 
     all_series = []
     invalid_stock = []
 
     for stock in args:
-        stock_history = get_stock_history(stock)
+        stock_history = get_stock_history_cached(stock, data_period=period)
 
         if stock_history.get("success") == True:
 
             stock_data = stock_history.get("data")
             copy_history_data = stock_data.copy()
 
-            frmt_index = copy_history_data.index.tz_localize(None)
-            copy_history_data.index = frmt_index
             close_series = pd.Series(copy_history_data["Close"], name=stock.upper())
                         
             all_series.append(close_series)
@@ -182,6 +285,8 @@ def compare_stocks(*args: str):
     else:
         return {"success":False, "data":None, "message":f"Invalid stock / stock was not entered"}
 
+    print(all_stock_df)
+
     all_stock_df = (all_stock_df / all_stock_df.iloc[0]) * 100
 
     if invalid_stock:
@@ -193,7 +298,10 @@ def compare_stocks(*args: str):
 
 
 
-        
+
+
+
+
 
         
 

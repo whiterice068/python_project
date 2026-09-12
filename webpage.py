@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from service import *
+import re
 
 st.title("Stock Indicator")
 
@@ -15,11 +16,57 @@ match selection:
     case "Financial index":
 
         stock_symbol = st.text_input(label="Stock symbol", placeholder="Please enter a stock symbol  (  e.g.  'NVDA'  ,  '0700.HK'  ) ")
+        period = st.text_input(label="Period", value="1y", placeholder="Please enter the period  (e.g.  '2y'  ,  '6mo'  ,  '50d'  ) ")
 
         f_index = st.selectbox(label="Financial Index", options=("MA", "RSI", "MACD", "BOLL"), placeholder="Select the financial index", index=None)
 
         if stock_symbol:
-            stock_history = get_stock_history(stock_symbol)
+
+            financial_info = get_stock_financial_info(stock_symbol)
+
+            if financial_info.get("success") == True:
+                financial_data = financial_info.get("data")
+                
+                f1, f2, f3= st.columns([3,1,1], gap="xxsmall")
+
+                f1.metric("Market Cap", financial_data.get("marketCap"), format="dollar", border=True)
+                f2.metric("Gross Margin", financial_data.get("grossMargins"), format="dollar", border=True)
+                f3.metric("Price to Book P/B", financial_data.get("priceToBook"), format="%.2f", border=True)
+                
+
+                f4, f5 = st.columns([2,1], gap="xxsmall")
+
+                f4.metric("Total Revenue", financial_data.get("totalRevenue"), format="dollar", border=True)
+                f5.metric("Dividend Yield", financial_data.get("dividendYield"), format="percent", border=True)
+
+                f6, f7 = st.columns([2,1], gap="xxsmall")
+
+                f6.metric("Gross Profit", financial_data.get("grossProfits"), format="dollar", border=True)
+                f7.metric("Dividend Rate", financial_data.get("dividendRate"), format="percent", border=True)
+                
+
+                f8, f9, f10, f11 = st.columns(4, gap="xxsmall")
+
+                f8.metric("Trailing PE", financial_data.get("trailingPE"), border=True, format="%.3f")
+                f9.metric("Forward PE", financial_data.get("forwardPE"), border=True, format="%.3f")
+                
+                if financial_data.get("trailingEps"):
+                    f10.metric("Trailing EPS", f'${financial_data.get("trailingEps"):.2f}/s', format="dollar", border=True)
+
+                else:
+                    f10.metric("Trailing EPS", financial_data.get("trailingEps"), border=True)
+
+                if financial_data.get("trailingEps"):
+                    f11.metric("Forward EPS", f"${financial_data.get("forwardEps"):.2f}/s", format="dollar", border=True)
+
+                else:
+                    f11.metric("Forward EPS", financial_data.get("forwardEps"), border=True)
+                              
+                with st.expander("See financial info"):
+                    df = pd.DataFrame({"info":financial_data.keys(), "value":financial_data.values()})
+                    st.dataframe(df)
+
+            stock_history = get_stock_history_cached(stock_symbol, data_period=period)
 
             if stock_history.get("success") == True:
                 stock_data = stock_history.get("data")
@@ -76,18 +123,20 @@ match selection:
 
                                                     
             else:
-                st.write("Fail to claculate financial index")
+                st.write("Fail to calculate financial index, please check for the stock symbol")
 
         else:
             st.write("Please enter a stock symbol")
 
     case "Compare stocks":
 
-        stock_symbol = st.text_input("Enter the stocks you want to compare", placeholder="Enter the stocks ( e.g. NVDA, AAPL )")
-        symbol_list = stock_symbol.upper().split(",")
+        stock_symbol = st.text_input("Enter the stocks you want to compare", placeholder="Enter the stocks ( e.g. NVDA , AAPL )")
+        period = st.text_input(label="Period", value="1y", placeholder="Please enter the period  (e.g.  '2y'  ,  '6mo'  ,  '50d'  ) ")
+        symbol_list = re.split(r"\s*,\s*", stock_symbol.upper().strip())
+        symbol_set = {*symbol_list}
         
 
-        compare_stock = compare_stocks(*symbol_list)
+        compare_stock = compare_stocks(*symbol_set, period=period)
 
         if compare_stock.get("success") == True:
             
@@ -102,12 +151,5 @@ match selection:
             st.plotly_chart(cs_fig)
 
         else:
+
             st.write(compare_stock.get("message"))
-
-        
-
-
-
-
-        
-
